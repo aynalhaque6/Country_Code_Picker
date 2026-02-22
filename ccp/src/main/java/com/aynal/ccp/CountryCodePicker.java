@@ -39,6 +39,18 @@ public class CountryCodePicker extends LinearLayout {
     private List<Country> allCountries;
     private EditText registeredEditText;
 
+    // ===== Country change callbacks =====
+    public interface OnCountryChangeListener {
+        void onCountrySelected(Country country);
+    }
+
+    private OnCountryChangeListener onCountryChangeListener;
+    private Runnable onCountryChangeRunnable;
+
+    // If setCountry... is called before countries are loaded
+    private String pendingIsoNameCode = null;
+    private String pendingDialCode = null;
+
     public CountryCodePicker(Context context) {
         super(context);
         init(context, null);
@@ -109,6 +121,20 @@ public class CountryCodePicker extends LinearLayout {
         SmartCountryLoader.loadCountries(getContext(), customServerUrl, isBengali, countries -> {
             this.allCountries = countries;
             if (selectedCountry == null) {
+                // 1) If caller requested a country programmatically, prefer that
+                if (pendingIsoNameCode != null) {
+                    setCountryByIso(pendingIsoNameCode);
+                    pendingIsoNameCode = null;
+                    pendingDialCode = null;
+                    return;
+                }
+                if (pendingDialCode != null) {
+                    setCountryByDialCodeInternal(pendingDialCode);
+                    pendingDialCode = null;
+                    return;
+                }
+
+                // 2) Otherwise default behaviour
                 if (autoDetectSim) detectSim();
                 else setCountryByIso(defaultNameCode);
             }
@@ -153,6 +179,9 @@ public class CountryCodePicker extends LinearLayout {
         if (registeredEditText != null) {
             registeredEditText.setHint(country.getHint());
         }
+
+        // Notify listeners
+        notifyCountryChanged();
     }
 
     private void openPickerDialog() {
@@ -166,6 +195,87 @@ public class CountryCodePicker extends LinearLayout {
         if (selectedCountry != null) editText.setHint(selectedCountry.getHint());
     }
 
+    // ===== Public APIs: programmatic country set =====
+
+    /**
+     * Set country by ISO 2-letter name code (e.g., "BD", "US", "IN").
+     */
+    public void setCountryForNameCode(String nameCode) {
+        if (nameCode == null) return;
+        String iso = nameCode.trim();
+        if (iso.isEmpty()) return;
+
+        if (allCountries == null) {
+            pendingIsoNameCode = iso;
+            pendingDialCode = null;
+            loadData();
+            return;
+        }
+        setCountryByIso(iso);
+    }
+
+    /**
+     * Set country by phone dial code (e.g., "+880" or "880").
+     */
+    public void setCountryForDialCode(String dialCode) {
+        if (dialCode == null) return;
+        String code = dialCode.trim();
+        if (code.startsWith("+")) code = code.substring(1);
+        if (code.isEmpty()) return;
+
+        if (allCountries == null) {
+            pendingDialCode = code;
+            pendingIsoNameCode = null;
+            loadData();
+            return;
+        }
+        setCountryByDialCodeInternal(code);
+    }
+
+    private void setCountryByDialCodeInternal(String dialCodeNoPlus) {
+        if (allCountries == null) return;
+        for (Country c : allCountries) {
+            String cDial = c.getDialCode();
+            String cClean = cDial == null ? "" : cDial.replace("+", "").trim();
+            if (dialCodeNoPlus.equals(cClean)) {
+                setSelectedCountry(c);
+                return;
+            }
+        }
+    }
+
+    // ===== Listener APIs =====
+
+    /**
+     * Listener with selected country object.
+     */
+    public void setOnCountryChangeListener(OnCountryChangeListener listener) {
+        this.onCountryChangeListener = listener;
+    }
+
+    /**
+     * No-arg listener for simple callbacks.
+     */
+    public void setOnCountryChangeListener(Runnable listener) {
+        this.onCountryChangeRunnable = listener;
+    }
+
+    private void notifyCountryChanged() {
+        try {
+            if (onCountryChangeListener != null && selectedCountry != null) {
+                onCountryChangeListener.onCountrySelected(selectedCountry);
+            }
+        } catch (Exception ignored) {
+        }
+
+        try {
+            if (onCountryChangeRunnable != null) {
+                onCountryChangeRunnable.run();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
     public boolean isValidFullNumber() {
         if (selectedCountry == null || registeredEditText == null) return false;
         return PhoneValidator.isValid(registeredEditText.getText().toString(), selectedCountry.getIso());
@@ -177,4 +287,26 @@ public class CountryCodePicker extends LinearLayout {
         String formatted = PhoneValidator.getFormattedNumber(number, selectedCountry.getIso());
         return formatted != null ? formatted : selectedCountry.getDialCode() + number;
     }
+
+    public String getSelectedCountryName() {
+        if (selectedCountry != null) {
+            return selectedCountry.getName();
+        }
+        return "";
+    }
+
+    public String getSelectedCountryNameCode() {
+        if (selectedCountry != null) {
+            return selectedCountry.getIso().toUpperCase();
+        }
+        return "";
+    }
+
+    public String getSelectedCountryCodeWithPlus() {
+        if (selectedCountry != null) {
+            return selectedCountry.getDialCode();
+        }
+        return "";
+    }
+
 }
